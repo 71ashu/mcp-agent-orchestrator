@@ -1,0 +1,5 @@
+# One goal per line. Lines starting with # are ignored.
+What services does the deployment control plane know about, and which are unhealthy?
+Find the latest production deployment for payments, inspect its logs, and say whether it introduced a problem.
+Summarize each file in the sandbox in one line.
+Compare error rate before and after the last two payments deployments.

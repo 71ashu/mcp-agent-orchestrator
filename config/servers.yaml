@@ -1,0 +1,50 @@
+# MCP server registry. The orchestrator connects to every server with `enabled: true`,
+# lists its tools at startup, and routes plan steps to them by capability.
+#
+# Each entry is launched as a subprocess over stdio. `${VAR}` is expanded from the
+# environment (loaded from .env).
+
+servers:
+  - name: filesystem
+    enabled: true
+    description: >
+      Read, write, and search files within a sandboxed directory. Use for anything
+      involving local file contents, listings, or text search.
+    transport: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "./sandbox"
+    # Tools tagged here as write operations require human approval before execution.
+    write_tools: ["write_file", "edit_file", "create_directory", "move_file"]
+
+  - name: deployment
+    enabled: true
+    description: >
+      Custom service-operations server. Query deployments, service health, and logs
+      for internal services, and (with approval) roll a deployment back.
+    transport: stdio
+    command: python
+    args: ["-m", "servers.deployment_server"]
+    write_tools: ["rollback_deployment"]
+
+  - name: github
+    enabled: false
+    description: >
+      Search repositories and code, read issues and pull requests, inspect commits.
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    write_tools: ["create_issue", "create_pull_request", "create_or_update_file", "add_issue_comment"]
+
+  - name: postgres
+    enabled: false
+    description: >
+      Run read-only SQL against the application database; describe schema and list tables.
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"]
+    write_tools: []
