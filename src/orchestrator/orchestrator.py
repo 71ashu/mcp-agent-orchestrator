@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import time
 from collections.abc import Callable
 
 from .approval import Approver, WriteToolPolicy, auto_approve
 from .config import AppConfig
+from .evaluation import EvalRow
 from .executor import Executor, ReplanRequested
 from .llm import LLM
 from .mcp_client import MCPClientPool
@@ -15,6 +18,7 @@ from .models import Plan, RunMetrics, RunResult
 from .planner import Planner
 from .recovery import RecoveryPolicy
 from .registry import ToolRegistry
+from .tracing import NoopTracer, Tracer, get_tracer, use_tracer
 
 PlanListener = Callable[[Plan], None]
 
@@ -37,6 +41,7 @@ class Orchestrator:
         on_plan: PlanListener | None = None,
         on_step=None,
         llm: LLM | None = None,
+        tracer: Tracer | None = None,
     ):
         self.config = config
         self.pool = pool
@@ -46,6 +51,7 @@ class Orchestrator:
         self.approver = approver
         self.on_plan = on_plan or (lambda _p: None)
         self.on_step = on_step or (lambda _s: None)
+        self.tracer = tracer or NoopTracer()
 
         self.planner = Planner(self.llm, self.registry, config.max_plan_steps)
         self.recovery = RecoveryPolicy(
@@ -53,10 +59,33 @@ class Orchestrator:
         )
         self.approval_policy = WriteToolPolicy(self.registry)
 
-    async def run(self, goal: str) -> RunResult:
+    async def run(self, goal: str, *, eval_batch_id: str | None = None) -> RunResult:
+        """Run one goal. `eval_batch_id` tags the run and adds an `eval` span."""
+        attributes: dict = {"servers": self.registry.servers()}
+        if eval_batch_id:
+            attributes["eval_batch_id"] = eval_batch_id
+        with use_tracer(self.tracer), self.tracer.run(
+            goal, model=self.config.model, attributes=attributes
+        ) as run_span:
+            result = await self._run(goal)
+            run_span.set_status("succeeded" if result.success else "failed")
+            run_span.set_output({"answer": result.answer})
+            if not result.success:
+                run_span.record_error(result.answer)
+            m = result.metrics
+            run_span.set_attributes(
+                replans=m.replans, tool_calls=m.tool_calls, tool_failures=m.tool_failures,
+                retries=m.retries, approvals_requested=m.approvals_requested,
+                approvals_granted=m.approvals_granted,
+            )
+            if eval_batch_id:
+                _trace_eval(result, eval_batch_id)
+            return result
+
+    async def _run(self, goal: str) -> RunResult:
         metrics = RunMetrics()
         hint = self.memory.hint_for(goal)
-        plan = self.planner.create_plan(goal, metrics, hint=hint)
+        plan = self._plan(goal, metrics, hint, attempt=1)
         self.on_plan(plan)
 
         executor = Executor(
@@ -72,7 +101,7 @@ class Orchestrator:
         outputs: dict = {}
         for attempt in range(self.config.max_replans + 1):
             try:
-                outputs = await executor.run(plan, metrics)
+                outputs = await executor.run(plan, metrics, plan_attempt=attempt + 1)
                 break
             except ReplanRequested as rp:
                 if attempt >= self.config.max_replans:
@@ -81,10 +110,12 @@ class Orchestrator:
                         answer=f"Could not complete the task: {rp.reason}",
                     )
                 metrics.replans += 1
-                plan = self.planner.create_plan(
+                plan = self._plan(
                     goal, metrics,
-                    hint=(hint or "") + f"\n\nPrevious attempt failed: {rp.reason}. "
+                    (hint or "") + f"\n\nPrevious attempt failed: {rp.reason}. "
                     f"Observations so far: {json.dumps(_summarize(outputs), default=str)[:2000]}",
+                    attempt=attempt + 2,
+                    replan_reason=rp.reason,
                 )
                 self.on_plan(plan)
 
@@ -92,6 +123,29 @@ class Orchestrator:
         return self._finalize(goal, plan, metrics, outputs, success=True, answer=answer)
 
     # ------------------------------------------------------------------ helpers
+
+    def _plan(
+        self,
+        goal: str,
+        metrics: RunMetrics,
+        hint: str | None,
+        *,
+        attempt: int,
+        replan_reason: str | None = None,
+    ) -> Plan:
+        with get_tracer().span(
+            "plan",
+            f"plan #{attempt}" if attempt == 1 else f"replan #{attempt}",
+            input={"goal": goal, "hint": hint},
+            attempt=attempt,
+            attributes={"replan_reason": replan_reason} if replan_reason else None,
+        ) as span:
+            plan = self.planner.create_plan(goal, metrics, hint=hint)
+            span.set_output({
+                "reasoning": plan.reasoning,
+                "steps": [s.model_dump(include=_PLANNED_STEP_FIELDS) for s in plan.steps],
+            })
+        return plan
 
     def _synthesize(self, goal: str, plan: Plan, outputs: dict, metrics: RunMetrics) -> str:
         transcript = []
@@ -109,13 +163,14 @@ class Orchestrator:
             system=SYNTHESIS_SYSTEM,
             user=f"GOAL:\n{goal}\n\nEXECUTION TRANSCRIPT:\n{_truncate(json.dumps(transcript, default=str, indent=2))}",
             max_tokens=1500,
+            purpose="synthesize",
         )
         metrics.synthesis_tokens_in += resp.tokens_in
         metrics.synthesis_tokens_out += resp.tokens_out
         return resp.text.strip()
 
     def _finalize(self, goal, plan, metrics, outputs, *, success, answer) -> RunResult:
-        metrics.finished_at = __import__("time").time()
+        metrics.finished_at = time.time()
         result = RunResult(
             goal=goal, plan=plan, answer=answer, success=success, metrics=metrics
         )
@@ -124,6 +179,21 @@ class Orchestrator:
         except Exception:
             pass
         return result
+
+
+_PLANNED_STEP_FIELDS = {
+    "id", "server", "tool", "arguments", "depends_on", "rationale", "resolve_arguments_at_runtime"
+}
+
+
+def _trace_eval(result: RunResult, eval_batch_id: str) -> None:
+    row = dataclasses.asdict(EvalRow.from_result(result))
+    row.pop("cost_usd")  # cost comes from the collector's pricing table, not hardcoded rates
+    with get_tracer().span(
+        "eval", "eval", input={"goal": result.goal},
+        attributes={"eval_batch_id": eval_batch_id, "passed": result.success},
+    ) as span:
+        span.set_output(row)
 
 
 def _summarize(outputs: dict) -> dict:

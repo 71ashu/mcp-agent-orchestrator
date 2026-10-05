@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6"]
+# Tracing to the Agent Trace Explorer; locally: pip install -e ./switchboard-trace
+trace = ["switchboard-trace>=0.1"]
 
 [project.scripts]
 orchestrator = "orchestrator.cli:app"
@@ -30,7 +32,8 @@ packages = ["src/orchestrator"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["src", "tests"]
+pythonpath = ["src", "tests", "switchboard-trace/src"]
+# switchboard-trace has its own suite: cd switchboard-trace && pytest
 
 [tool.ruff]
 line-length = 100

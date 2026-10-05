@@ -109,7 +109,7 @@ class RecoveryPolicy:
         )
         try:
             data, resp = self.llm.complete_json(
-                system=REPAIR_SYSTEM, user=user, max_tokens=800
+                system=REPAIR_SYSTEM, user=user, max_tokens=800, purpose="repair_args"
             )
         except Exception:
             return None

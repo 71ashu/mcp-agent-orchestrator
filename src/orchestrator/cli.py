@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import getpass
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,12 +16,13 @@ from rich.json import JSON
 from rich.panel import Panel
 from rich.table import Table
 
-from .approval import auto_approve, auto_reject
+from .approval import ApprovalDecision, auto_approve, auto_reject
 from .config import load_config
 from .evaluation import EvalRow, summarize
 from .mcp_client import MCPClientPool
 from .models import Plan, PlanStep, StepStatus
 from .orchestrator import Orchestrator
+from .tracing import Tracer
 
 app = typer.Typer(add_completion=False, help="Multi-server MCP agent orchestrator")
 console = Console()
@@ -57,7 +61,7 @@ def _render_step(step: PlanStep) -> None:
     console.print(line)
 
 
-def _approver_prompt(step: PlanStep, args: dict[str, Any]) -> bool:
+def _approver_prompt(step: PlanStep, args: dict[str, Any]) -> ApprovalDecision:
     console.print(
         Panel(
             JSON(json.dumps(args, default=str, indent=2)),
@@ -66,7 +70,28 @@ def _approver_prompt(step: PlanStep, args: dict[str, Any]) -> bool:
             border_style="magenta",
         )
     )
-    return typer.confirm("  Approve this write operation?", default=False)
+    approved = typer.confirm("  Approve this write operation?", default=False)
+    return ApprovalDecision(approved, approver=f"user:{getpass.getuser()}")
+
+
+def _make_tracer() -> Tracer | None:
+    """Trace to the Agent Trace Explorer when SWITCHBOARD_TRACE_URL is set."""
+    if not os.environ.get("SWITCHBOARD_TRACE_URL"):
+        return None
+    try:
+        from switchboard_trace import Tracer as HttpTracer
+    except ImportError:
+        console.print(
+            "[yellow]SWITCHBOARD_TRACE_URL is set but switchboard-trace isn't installed "
+            "(pip install -e ./switchboard-trace); tracing disabled[/]"
+        )
+        return None
+    return HttpTracer.from_env()
+
+
+def _close_tracer(tracer: Tracer | None) -> None:
+    if tracer is not None:
+        tracer.close(timeout=5)  # type: ignore[attr-defined]
 
 
 async def _with_pool(config_path: str):
@@ -113,6 +138,7 @@ def run(
 
     async def _run():
         cfg, pool = await _with_pool(config)
+        tracer = _make_tracer()
         try:
             orch = Orchestrator(
                 cfg,
@@ -120,10 +146,12 @@ def run(
                 approver=approver,
                 on_plan=None if as_json else _render_plan,
                 on_step=None if as_json else _render_step,
+                tracer=tracer,
             )
             result = await orch.run(goal)
         finally:
             await pool.aclose()
+            _close_tracer(tracer)
 
         if as_json:
             console.print_json(result.model_dump_json())
@@ -156,16 +184,20 @@ def eval_cmd(
         if ln.strip() and not ln.startswith("#")
     ]
 
+    batch_id = f"eval-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+
     async def _run():
         cfg, pool = await _with_pool(config)
+        tracer = _make_tracer()
         results = []
         try:
-            orch = Orchestrator(cfg, pool, approver=approver)
+            orch = Orchestrator(cfg, pool, approver=approver, tracer=tracer)
             for g in goals:
                 console.rule(g)
-                results.append(await orch.run(g))
+                results.append(await orch.run(g, eval_batch_id=batch_id))
         finally:
             await pool.aclose()
+            _close_tracer(tracer)
 
         table = Table(title="Evaluation", expand=True)
         for col in ("goal", "ok", "steps", "calls", "fail", "retry", "replan", "wall(ms)", "tok(in/out)", "$"):
@@ -180,6 +212,7 @@ def eval_cmd(
                 f"{row.tokens_in}/{row.tokens_out}", f"{row.cost_usd:.4f}",
             )
         console.print(table)
+        console.print(f"[dim]eval batch: {batch_id}[/]")
         console.print_json(json.dumps(summarize(results)))
 
     asyncio.run(_run())

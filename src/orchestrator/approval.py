@@ -3,13 +3,32 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .models import PlanStep, ToolKind
 from .registry import ToolRegistry
 
-# An approver receives (step, resolved_arguments) and returns True to allow.
-Approver = Callable[[PlanStep, dict[str, Any]], bool]
+
+@dataclass(frozen=True)
+class ApprovalDecision:
+    """Who decided, and why. Truthy when approved, for code that expects a bool."""
+
+    approved: bool
+    approver: str = "unknown"
+    reason: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.approved
+
+
+# An approver receives (step, resolved_arguments) and returns a decision. A plain
+# bool is still accepted (recorded with approver "unknown").
+Approver = Callable[[PlanStep, dict[str, Any]], "ApprovalDecision | bool"]
+
+
+def as_decision(result: ApprovalDecision | bool) -> ApprovalDecision:
+    return result if isinstance(result, ApprovalDecision) else ApprovalDecision(bool(result))
 
 
 class ApprovalPolicy(Protocol):
@@ -30,9 +49,9 @@ class WriteToolPolicy:
         return bool(spec and spec.kind == ToolKind.WRITE)
 
 
-def auto_approve(_step: PlanStep, _args: dict[str, Any]) -> bool:
-    return True
+def auto_approve(_step: PlanStep, _args: dict[str, Any]) -> ApprovalDecision:
+    return ApprovalDecision(True, approver="policy:auto-approve")
 
 
-def auto_reject(_step: PlanStep, _args: dict[str, Any]) -> bool:
-    return False
+def auto_reject(_step: PlanStep, _args: dict[str, Any]) -> ApprovalDecision:
+    return ApprovalDecision(False, approver="policy:auto-reject")

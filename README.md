@@ -50,6 +50,8 @@ approval, and synthesizes a final answer — while tracking evaluation metrics.
 | `src/orchestrator/memory.py` | Past successful tool sequences → planner hints |
 | `src/orchestrator/evaluation.py` | Per-run + aggregate metrics |
 | `src/orchestrator/orchestrator.py` | plan → execute → replan → synthesize loop |
+| `src/orchestrator/tracing.py` | Tracer protocol + ambient tracer (no-op by default) |
+| `switchboard-trace/` | Standalone trace emitter package (see its README) |
 | `servers/deployment_server.py` | Custom MCP server (fake deploy control plane) |
 
 ## Setup
@@ -86,6 +88,36 @@ orchestrator eval examples/eval_tasks.txt
 orchestrator memory
 ```
 
+## Tracing (Agent Trace Explorer)
+
+Every run can stream live to the Agent Trace Explorer:
+
+```bash
+pip install -e ./switchboard-trace
+export SWITCHBOARD_TRACE_URL=http://localhost:4100   # collector
+export SWITCHBOARD_TRACE_TOKEN=...                   # ingest token, if the collector requires one
+orchestrator run "..."
+```
+
+Tracing is off unless `SWITCHBOARD_TRACE_URL` is set. It never changes agent behavior. If the collector is down, events are buffered, retried, and eventually dropped with a warning. Each run produces this span tree:
+
+```text
+run
+├─ plan #1 ─ llm:plan
+├─ step 1: deployment.get_latest_deployment ─ tool_call (attempt 1)
+├─ step 2: …  (depends_on → step 1)
+│   ├─ llm:resolve_args
+│   ├─ approval            (approver, decision, wait_ms)
+│   ├─ tool_call (attempt 1) ✗
+│   ├─ retry               (action: retry | repair_args | replan | abort) ─ llm:repair_args
+│   └─ tool_call (attempt 2) ✓
+├─ replan #2 …             (after a rejection or unrecoverable failure)
+├─ llm:synthesize
+└─ eval                    (only under `orchestrator eval`; run tagged with eval_batch_id)
+```
+
+Approvers return `ApprovalDecision(approved, approver, reason)`. The CLI records `user:$USER`, and the `--approve auto|reject` policies record `policy:auto-approve|auto-reject`. A plain `bool` still works.
+
 ## What each concept maps to
 
 - **Dynamic tool discovery** — `MCPClientPool.connect_all` → `ServerConnection.discover`;
@@ -112,3 +144,7 @@ pytest            # offline — no API key or network needed
 
 Covers template resolution, dependency ordering, plan validation, approval-driven
 replan, and transient-error retry with the fakes in `tests/conftest.py`.
+`tests/test_tracing.py` checks the emitted span tree. It runs the real `LLM` class
+against a scripted Anthropic client and the real `deployment` server.
+
+The emitter has its own suite: `cd switchboard-trace && pytest -s` (`-s` prints overhead numbers).
