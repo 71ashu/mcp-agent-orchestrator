@@ -10,6 +10,9 @@ dependency-aware execution graph for a natural-language goal, routes each step t
 the right server, recovers from failures, gates write operations behind human
 approval, and synthesizes a final answer — while tracking evaluation metrics.
 
+> A full **TypeScript port** lives in [`ts/`](ts/README.md), built on the official
+> MCP and Anthropic TypeScript SDKs with zod-validated plans and a Vitest suite.
+
 ```
                  goal (natural language)
                           │
