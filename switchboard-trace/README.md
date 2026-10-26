@@ -1,7 +1,8 @@
 # switchboard-trace
 
 Non-blocking trace emitter for Switchboard agent runs. It streams OpenTelemetry-style
-run/span events to the [Agent Trace Explorer](../../agent-trace-explorer) collector.
+run/span events to the Agent Trace Explorer collector (a separate project, in progress;
+the emitter works standalone and is a no-op unless `SWITCHBOARD_TRACE_URL` is set).
 
 ```python
 from switchboard_trace import Tracer

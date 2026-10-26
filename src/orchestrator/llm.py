@@ -53,16 +53,17 @@ class LLM:
         system: str,
         user: str,
         max_tokens: int = 2000,
-        temperature: float = 0.0,
         tools: list[dict] | None = None,
         tool_choice: dict | None = None,
         purpose: str = "complete",
     ) -> LLMResponse:
-        """`purpose` labels the call in traces (plan, resolve_args, repair_args, ...)."""
+        """`purpose` labels the call in traces (plan, resolve_args, repair_args, ...).
+
+        No `temperature`: current Anthropic SDKs removed it from `messages.create`.
+        """
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
@@ -71,8 +72,7 @@ class LLM:
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
 
-        trace_input = {"system": system, "user": user, "max_tokens": max_tokens,
-                       "temperature": temperature}
+        trace_input = {"system": system, "user": user, "max_tokens": max_tokens}
         if tools:
             trace_input["tools"] = [t.get("name") for t in tools]
         with get_tracer().span(

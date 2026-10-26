@@ -10,5 +10,10 @@ build/
 .ruff_cache/
 data/memory.json
 data/runs/
-sandbox/
+# sandbox/ is the filesystem MCP server's root: track the seed files, ignore anything
+# the agent writes there
+sandbox/*
+!sandbox/README.md
+!sandbox/checkout-notes.txt
+!sandbox/ledger.txt
 .DS_Store

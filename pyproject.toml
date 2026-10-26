@@ -16,8 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6"]
-# Tracing to the Agent Trace Explorer; locally: pip install -e ./switchboard-trace
-trace = ["switchboard-trace>=0.1"]
+# Tracing is optional and not on PyPI: pip install -e ./switchboard-trace
 
 [project.scripts]
 orchestrator = "orchestrator.cli:app"

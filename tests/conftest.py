@@ -88,6 +88,18 @@ class ScriptedAnthropic:
         self.messages = self
 
     def create(self, **kwargs):
+        # Reject anything the installed SDK's real `messages.create` doesn't accept, so a
+        # removed/renamed parameter fails here instead of only against the live API.
+        import inspect
+
+        import anthropic
+
+        allowed = inspect.signature(
+            anthropic.Anthropic(api_key="test-key-not-used").messages.create
+        ).parameters
+        unknown = sorted(set(kwargs) - set(allowed))
+        if unknown:
+            raise TypeError(f"Messages.create() got unexpected keyword argument(s): {unknown}")
         self.requests.append(kwargs)
         ns = self._ns
         return ns(

@@ -1,0 +1,1 @@
+checkout depends on payments.capture and ledger.reserve. SLA: p95 < 300ms.
