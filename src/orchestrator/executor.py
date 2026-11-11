@@ -94,12 +94,13 @@ class Executor:
             metrics.approvals_requested += 1
             step.status = StepStatus.AWAITING_APPROVAL
             self.on_step(step)
-            if not self._request_approval(step, args).approved:
+            decision = self._request_approval(step, args)
+            if not decision.approved:
                 step.status = StepStatus.REJECTED
-                step.error = "rejected by human approver"
+                step.error = _rejection_message(decision)
                 self.on_step(step)
                 raise ReplanRequested(
-                    f"step {step.id} ({step.qualified_tool}) was rejected", step
+                    f"step {step.id} ({step.qualified_tool}) was {step.error}", step
                 )
             metrics.approvals_granted += 1
 
@@ -258,3 +259,11 @@ def _close_step_span(span: SpanHandle, step: PlanStep) -> None:
 
 def _truncate(text: str, limit: int = 6000) -> str:
     return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
+
+
+def _rejection_message(decision: ApprovalDecision) -> str:
+    """Describe a rejection so the replanner acts on the approver's feedback, not a guess."""
+    reason = (decision.reason or "").strip()
+    if reason:
+        return f"rejected by the approver with this feedback: {reason}"
+    return "rejected by the approver (no reason given)"

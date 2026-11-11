@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from rich.console import Console
-from rich.json import JSON
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from .approval import ApprovalDecision, auto_approve, auto_reject
 from .config import load_config
@@ -61,17 +61,31 @@ def _render_step(step: PlanStep) -> None:
     console.print(line)
 
 
-def _approver_prompt(step: PlanStep, args: dict[str, Any]) -> ApprovalDecision:
-    console.print(
-        Panel(
-            JSON(json.dumps(args, default=str, indent=2)),
-            title=f"[magenta]Approval required[/] — {step.qualified_tool}",
-            subtitle=step.rationale,
-            border_style="magenta",
-        )
+def _approval_panel(step: PlanStep, args: dict[str, Any]) -> Panel:
+    """Show every argument in full: an approver must see exactly what will run."""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="cyan", no_wrap=True)
+    grid.add_column(overflow="fold")
+    for key, value in args.items():
+        shown = value if isinstance(value, str) else json.dumps(value, default=str, indent=2)
+        grid.add_row(key, Text(shown))
+    body = Group(grid, Text(""), Text(f"Why: {step.rationale}", style="dim"))
+    return Panel(
+        body,
+        title=f"[magenta]Approval required[/] — {step.qualified_tool}",
+        border_style="magenta",
     )
-    approved = typer.confirm("  Approve this write operation?", default=False)
-    return ApprovalDecision(approved, approver=f"user:{getpass.getuser()}")
+
+
+def _approver_prompt(step: PlanStep, args: dict[str, Any]) -> ApprovalDecision:
+    console.print(_approval_panel(step, args))
+    approver = f"user:{getpass.getuser()}"
+    if typer.confirm("  Approve this write operation?", default=False):
+        return ApprovalDecision(True, approver=approver)
+    reason = typer.prompt(
+        "  Why? (optional, guides the replan)", default="", show_default=False
+    )
+    return ApprovalDecision(False, approver=approver, reason=reason.strip() or None)
 
 
 def _make_tracer() -> Tracer | None:

@@ -10,6 +10,16 @@ from orchestrator.models import ToolKind, ToolSpec
 from orchestrator.registry import ToolRegistry
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_env(monkeypatch):
+    """Pin settings a developer's local .env would otherwise leak into tests.
+
+    load_dotenv() never overrides variables that are already set, so pinning them
+    here keeps every run identical regardless of the machine.
+    """
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "claude-sonnet-5")
+
+
 class FakePool:
     """Stands in for MCPClientPool. `handlers[(server, tool)] -> callable(args)`."""
 
