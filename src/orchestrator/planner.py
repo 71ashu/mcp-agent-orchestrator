@@ -60,7 +60,7 @@ class Planner:
             user += f"\n\nADDITIONAL CONTEXT:\n{hint}"
 
         data, resp = self.llm.complete_json(
-            system=PLANNER_SYSTEM, user=user, max_tokens=2500
+            system=PLANNER_SYSTEM, user=user, max_tokens=2500, purpose="plan"
         )
         metrics.planner_tokens_in += resp.tokens_in
         metrics.planner_tokens_out += resp.tokens_out

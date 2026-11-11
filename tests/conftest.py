@@ -72,3 +72,47 @@ def deployment_tools() -> list[ToolSpec]:
 @pytest.fixture
 def registry(deployment_tools) -> ToolRegistry:
     return ToolRegistry(deployment_tools)
+
+
+class ScriptedAnthropic:
+    """Stands in for the `anthropic.Anthropic` client so the REAL `LLM` class (and its
+    tracing hook) runs. Replies are returned in order; usage is fixed per call."""
+
+    def __init__(self, replies: list[str], tokens_in: int = 100, tokens_out: int = 20):
+        from types import SimpleNamespace
+
+        self._ns = SimpleNamespace
+        self.replies = list(replies)
+        self.tokens = (tokens_in, tokens_out)
+        self.requests: list[dict] = []
+        self.messages = self
+
+    def create(self, **kwargs):
+        # Reject anything the installed SDK's real `messages.create` doesn't accept, so a
+        # removed/renamed parameter fails here instead of only against the live API.
+        import inspect
+
+        import anthropic
+
+        allowed = inspect.signature(
+            anthropic.Anthropic(api_key="test-key-not-used").messages.create
+        ).parameters
+        unknown = sorted(set(kwargs) - set(allowed))
+        if unknown:
+            raise TypeError(f"Messages.create() got unexpected keyword argument(s): {unknown}")
+        self.requests.append(kwargs)
+        ns = self._ns
+        return ns(
+            content=[ns(type="text", text=self.replies.pop(0))],
+            usage=ns(input_tokens=self.tokens[0], output_tokens=self.tokens[1],
+                     cache_read_input_tokens=0, cache_creation_input_tokens=None),
+            stop_reason="end_turn",
+        )
+
+
+def scripted_llm(replies: list[str], model: str = "claude-sonnet-5"):
+    from orchestrator.llm import LLM
+
+    llm = LLM(model, api_key="test-key-not-used")
+    llm._client = ScriptedAnthropic(replies)
+    return llm
