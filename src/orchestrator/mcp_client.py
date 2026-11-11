@@ -117,6 +117,9 @@ class MCPClientPool:
         result = await conn.session.call_tool(name, arguments or {})
         if result.isError:
             raise ToolCallError(_stringify_content(result.content))
+        structured = getattr(result, "structuredContent", None)
+        if structured is not None:
+            return _unwrap_structured(structured)
         return _normalize_content(result.content)
 
 
@@ -140,20 +143,33 @@ def _stringify_content(content: list[Any]) -> str:
     return "\n".join(parts) or "unknown tool error"
 
 
+def _unwrap_structured(structured: Any) -> Any:
+    """FastMCP wraps non-object return values as {"result": value}; unwrap that."""
+    if isinstance(structured, dict) and set(structured) == {"result"}:
+        return structured["result"]
+    return structured
+
+
 def _normalize_content(content: list[Any]) -> Any:
-    """Collapse MCP content blocks into plain Python for the LLM and templates."""
+    """Collapse MCP content blocks into plain Python for the LLM and templates.
+
+    Servers may split one result across several blocks (FastMCP emits one block per
+    list item), so every block is parsed and kept; none is dropped.
+    """
     import json
 
-    texts: list[str] = []
+    items: list[Any] = []
     for block in content or []:
         text = getattr(block, "text", None)
         if text is None:
-            texts.append(str(block))
+            items.append(str(block))
             continue
         try:
-            return json.loads(text)  # many servers return a single JSON text block
+            items.append(json.loads(text))
         except (ValueError, TypeError):
-            texts.append(text)
-    if len(texts) == 1:
-        return texts[0]
-    return texts
+            items.append(text)
+    if not items:
+        return None
+    if len(items) == 1:
+        return items[0]
+    return items
