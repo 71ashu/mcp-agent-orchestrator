@@ -52,6 +52,8 @@ class PlanStep(BaseModel):
     resolve_arguments_at_runtime: bool = False
 
     status: StepStatus = StepStatus.PENDING
+    # The arguments actually sent (templates filled, runtime resolution/repair applied).
+    resolved_arguments: dict[str, Any] | None = None
     output: Any = None
     error: str | None = None
     attempts: int = 0

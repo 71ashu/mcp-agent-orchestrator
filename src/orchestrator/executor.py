@@ -21,17 +21,31 @@ StepListener = Callable[[PlanStep], None]
 
 ARG_RESOLVE_SYSTEM = """\
 You are finalizing the arguments for one tool call inside a larger plan. Given the
-overall goal, the tool schema, any partial arguments, and the observations produced
-by completed prior steps, return the complete arguments as a single JSON object.
-Use only information present in the observations or the goal.
+overall goal, this step's purpose, the tool schema, any partial arguments, and the
+observations produced by completed prior steps, return the complete arguments as a
+single JSON object. The step's purpose decides WHAT the call is about: if it targets a
+different entity than the overall goal (e.g. checking a dependency), use that entity.
+Use only information present in the observations, the step's purpose, or the goal.
 """
 
 
 class ReplanRequested(Exception):
-    def __init__(self, reason: str, failed_step: PlanStep):
+    def __init__(
+        self,
+        reason: str,
+        failed_step: PlanStep,
+        *,
+        arguments: dict[str, Any] | None = None,
+        feedback: str | None = None,
+    ):
         super().__init__(reason)
         self.reason = reason
         self.failed_step = failed_step
+        self.arguments = arguments  # the arguments the failed/rejected call would have used
+        self.feedback = feedback  # the approver's own words, when a write was rejected
+        # Successful calls made before this attempt stopped; filled in by Executor.run so
+        # the replanner can build on them instead of starting blind.
+        self.observations: list[dict[str, Any]] = []
 
 
 class Executor:
@@ -52,11 +66,22 @@ class Executor:
         self.approver = approver
         self.recovery = recovery
         self.on_step = on_step or (lambda _s: None)
+        self._prior_observations: list[dict[str, Any]] = []
 
     async def run(
-        self, plan: Plan, metrics: RunMetrics, *, plan_attempt: int = 1
+        self,
+        plan: Plan,
+        metrics: RunMetrics,
+        *,
+        plan_attempt: int = 1,
+        prior_observations: list[dict[str, Any]] | None = None,
     ) -> dict[int, Any]:
+        """Execute `plan`. `prior_observations` are successful calls from earlier attempts
+        of this run, so runtime-resolved arguments (e.g. a rollback reason that must cite
+        logs) can use evidence gathered before a replan."""
+        self._prior_observations = list(prior_observations or [])
         outputs: dict[int, Any] = {}
+        observations: list[dict[str, Any]] = []  # successful calls, with resolved arguments
         step_span_ids: dict[int, str] = {}  # plan step id -> span id, for DAG edges
         for step in self._in_dependency_order(plan):
             with get_tracer().span(
@@ -77,8 +102,14 @@ class Executor:
                         step.status = StepStatus.SKIPPED
                         self.on_step(step)
                         continue
-                    await self._run_step(step, plan, outputs, metrics)
+                    args = await self._run_step(step, plan, outputs, metrics)
                     outputs[step.id] = step.output
+                    observations.append(
+                        {"tool": step.qualified_tool, "arguments": args, "output": step.output}
+                    )
+                except ReplanRequested as rp:
+                    rp.observations = list(observations)
+                    raise
                 finally:
                     _close_step_span(span, step)
         return outputs
@@ -87,7 +118,8 @@ class Executor:
 
     async def _run_step(
         self, step: PlanStep, plan: Plan, outputs: dict[int, Any], metrics: RunMetrics
-    ) -> None:
+    ) -> dict[str, Any]:
+        """Run one step to success and return the arguments it actually ran with."""
         args = self._prepare_arguments(step, plan, outputs, metrics)
 
         if self.approval_policy.requires_approval(step):
@@ -100,12 +132,16 @@ class Executor:
                 step.error = _rejection_message(decision)
                 self.on_step(step)
                 raise ReplanRequested(
-                    f"step {step.id} ({step.qualified_tool}) was {step.error}", step
+                    f"step {step.id} ({step.qualified_tool}) was {step.error}",
+                    step,
+                    arguments=args,
+                    feedback=(decision.reason or "").strip() or None,
                 )
             metrics.approvals_granted += 1
 
         while True:
             step.attempts += 1
+            step.resolved_arguments = args
             step.status = StepStatus.RUNNING
             self.on_step(step)
             started = time.perf_counter()
@@ -126,7 +162,7 @@ class Executor:
                 step.error = None
                 metrics.tool_calls += 1
                 self.on_step(step)
-                return
+                return args
             except Exception as exc:
                 step.latency_ms = (time.perf_counter() - started) * 1000
                 step.error = str(exc)
@@ -145,9 +181,16 @@ class Executor:
                     continue
                 if decision.action == RecoveryAction.REPLAN:
                     raise ReplanRequested(
-                        f"step {step.id} failed: {step.error} ({decision.note})", step
+                        f"step {step.id} ({step.qualified_tool}) failed: {step.error} "
+                        f"({decision.note})",
+                        step,
+                        arguments=args,
                     )
-                raise ReplanRequested(f"step {step.id} aborted: {step.error}", step)
+                raise ReplanRequested(
+                    f"step {step.id} ({step.qualified_tool}) aborted: {step.error}",
+                    step,
+                    arguments=args,
+                )
 
     def _request_approval(self, step: PlanStep, args: dict[str, Any]) -> ApprovalDecision:
         with get_tracer().span(
@@ -210,11 +253,21 @@ class Executor:
         } or {k: v for k, v in outputs.items()}
         user = (
             f"GOAL:\n{plan.goal}\n\n"
+            f"THIS STEP'S PURPOSE:\n{step.rationale or '(none given)'}\n\n"
             f"TOOL: {step.qualified_tool}\n"
             f"TOOL SCHEMA:\n{json.dumps(spec.input_schema if spec else {}, indent=2)}\n\n"
             f"PARTIAL ARGUMENTS:\n{json.dumps(step.arguments, default=str)}\n\n"
             f"OBSERVATIONS FROM PRIOR STEPS:\n{_truncate(json.dumps(dep_context, default=str))}"
         )
+        if self._prior_observations:
+            compact = [
+                {**o, "output": _truncate(json.dumps(o["output"], default=str), 1500)}
+                for o in self._prior_observations
+            ]
+            user += (
+                "\n\nOBSERVATIONS FROM EARLIER ATTEMPTS OF THIS RUN (also valid evidence):\n"
+                f"{_truncate(json.dumps(compact, default=str), 4000)}"
+            )
         data, resp = self.llm.complete_json(
             system=ARG_RESOLVE_SYSTEM, user=user, max_tokens=800, purpose="resolve_args"
         )

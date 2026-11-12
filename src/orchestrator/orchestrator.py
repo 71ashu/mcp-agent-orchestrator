@@ -27,6 +27,11 @@ You are the final synthesizer for a multi-server agent. Given the user's goal, t
 executed plan, and every step's observation, write a direct, well-structured answer
 to the goal. Cite which tool/server produced each key fact. If the evidence is
 incomplete, say so explicitly rather than guessing.
+
+Observations from EARLIER ATTEMPTS are real evidence too; use them. If a human
+approver rejected a step, say what they asked for and how the final plan responded.
+If the final plan deliberately stopped short of the goal (e.g. a write was held back
+at the approver's request), say so plainly and state what the evidence now supports.
 """
 
 
@@ -99,11 +104,20 @@ class Orchestrator:
         )
 
         outputs: dict = {}
+        # Everything earlier attempts learned. Kept for the whole run so a later replan
+        # still sees the approver's feedback and the data already fetched, not just the
+        # most recent failure.
+        history: list[ReplanRequested] = []
+        observations: list[dict] = []
         for attempt in range(self.config.max_replans + 1):
             try:
-                outputs = await executor.run(plan, metrics, plan_attempt=attempt + 1)
+                outputs = await executor.run(
+                    plan, metrics, plan_attempt=attempt + 1, prior_observations=observations
+                )
                 break
             except ReplanRequested as rp:
+                history.append(rp)
+                observations.extend(rp.observations)
                 if attempt >= self.config.max_replans:
                     return self._finalize(
                         goal, plan, metrics, outputs, success=False,
@@ -112,14 +126,13 @@ class Orchestrator:
                 metrics.replans += 1
                 plan = self._plan(
                     goal, metrics,
-                    (hint or "") + f"\n\nPrevious attempt failed: {rp.reason}. "
-                    f"Observations so far: {json.dumps(_summarize(outputs), default=str)[:2000]}",
+                    _replan_context(hint, history, observations),
                     attempt=attempt + 2,
                     replan_reason=rp.reason,
                 )
                 self.on_plan(plan)
 
-        answer = self._synthesize(goal, plan, outputs, metrics)
+        answer = self._synthesize(goal, plan, outputs, metrics, history, observations)
         return self._finalize(goal, plan, metrics, outputs, success=True, answer=answer)
 
     # ------------------------------------------------------------------ helpers
@@ -147,21 +160,40 @@ class Orchestrator:
             })
         return plan
 
-    def _synthesize(self, goal: str, plan: Plan, outputs: dict, metrics: RunMetrics) -> str:
+    def _synthesize(
+        self,
+        goal: str,
+        plan: Plan,
+        outputs: dict,
+        metrics: RunMetrics,
+        history: list[ReplanRequested] | None = None,
+        observations: list[dict] | None = None,
+    ) -> str:
         transcript = []
         for step in plan.steps:
             transcript.append(
                 {
                     "step": step.id,
                     "tool": step.qualified_tool,
+                    "arguments": step.resolved_arguments
+                    if step.resolved_arguments is not None
+                    else step.arguments,
                     "status": step.status.value,
                     "observation": outputs.get(step.id),
                     "error": step.error,
                 }
             )
+        user = f"GOAL:\n{goal}\n\n"
+        if history:
+            # Same context the replanner got: feedback, earlier attempts, their data.
+            user += f"EARLIER ATTEMPTS:\n{_replan_context(None, history, observations or [])}\n\n"
+        user += (
+            "FINAL PLAN EXECUTION TRANSCRIPT:\n"
+            f"{_truncate(json.dumps(transcript, default=str, indent=2))}"
+        )
         resp = self.llm.complete(
             system=SYNTHESIS_SYSTEM,
-            user=f"GOAL:\n{goal}\n\nEXECUTION TRANSCRIPT:\n{_truncate(json.dumps(transcript, default=str, indent=2))}",
+            user=user,
             max_tokens=1500,
             purpose="synthesize",
         )
@@ -196,8 +228,44 @@ def _trace_eval(result: RunResult, eval_batch_id: str) -> None:
         span.set_output(row)
 
 
-def _summarize(outputs: dict) -> dict:
-    return {k: (v if isinstance(v, (int, float, str, bool)) else "<data>") for k, v in outputs.items()}
+def _replan_context(
+    hint: str | None, history: list[ReplanRequested], observations: list[dict]
+) -> str:
+    """Planner context for a replan: memory hint, approver feedback, every earlier
+    attempt, and the real data already observed (not placeholders)."""
+    parts = [hint] if hint else []
+    feedback = [rp.feedback for rp in history if rp.feedback]
+    if feedback:
+        parts.append(
+            "APPROVER FEEDBACK on rejected write steps. The new plan must honor ALL of it:\n"
+            + "\n".join(f"- {f}" for f in feedback)
+        )
+    attempts = []
+    for n, rp in enumerate(history, 1):
+        line = f"- attempt {n}: {rp.reason}"
+        if rp.arguments is not None:
+            line += f" | arguments: {_clip(json.dumps(rp.arguments, default=str), 600)}"
+        attempts.append(line)
+    parts.append("PREVIOUS ATTEMPTS (oldest first):\n" + "\n".join(attempts))
+    if observations:
+        compact = [
+            {**o, "output": _clip(json.dumps(o["output"], default=str), _OBSERVATION_CHARS)}
+            for o in observations
+        ]
+        parts.append(
+            "OBSERVATIONS SO FAR (successful tool calls from earlier attempts, with the "
+            "arguments used; reuse these facts, e.g. exact service names and ids):\n"
+            + _truncate(json.dumps(compact, default=str), _REPLAN_OBSERVATIONS_CHARS)
+        )
+    return "\n\n".join(parts)
+
+
+_OBSERVATION_CHARS = 1500  # per tool output, so one large log can't crowd out the rest
+_REPLAN_OBSERVATIONS_CHARS = 6000
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + "...[truncated]"
 
 
 def _truncate(text: str, limit: int = 12000) -> str:
