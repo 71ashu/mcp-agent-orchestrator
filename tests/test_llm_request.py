@@ -13,7 +13,7 @@ def test_complete_sends_only_parameters_the_sdk_accepts():
 
     assert resp.text == "hello"
     sent = llm._client.requests[0]
-    assert sent["model"] == "claude-sonnet-5"
+    assert sent["model"] == "claude-sonnet-5-5"
     assert "temperature" not in sent
 
 

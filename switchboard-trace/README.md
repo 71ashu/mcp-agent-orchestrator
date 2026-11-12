@@ -8,7 +8,7 @@ the emitter works standalone and is a no-op unless `SWITCHBOARD_TRACE_URL` is se
 from switchboard_trace import Tracer
 
 tracer = Tracer.from_env()  # None unless SWITCHBOARD_TRACE_URL is set
-with tracer.run("Did the payments deploy break anything?", model="claude-sonnet-5") as run:
+with tracer.run("Did the payments deploy break anything?", model="claude-sonnet-5-5") as run:
     with tracer.span("tool_call", "deployment.get_logs", mcp_server="deployment",
                      tool="get_logs", input={"deployment_id": "d-482"}) as span:
         span.set_output(logs)

@@ -118,7 +118,7 @@ orchestrator memory                                                 # show recor
 ```
 
 Run commands from the repo root (config and `sandbox/` paths are relative). Set the model with
-`ORCHESTRATOR_MODEL` (default `claude-sonnet-5`). To add servers, set `enabled: true` for `github`
+`ORCHESTRATOR_MODEL` (default `claude-sonnet-5-5`). To add servers, set `enabled: true` for `github`
 or `postgres` in [config/servers.yaml](config/servers.yaml) and fill in the matching variables from
 `.env.example`.
 

@@ -90,7 +90,7 @@ def scripted_approver(step, args):
 
 
 async def main() -> None:
-    llm = LLM("claude-sonnet-5", api_key="demo-not-used")
+    llm = LLM("claude-sonnet-5-5", api_key="demo-not-used")
     llm._client = ScriptedClient([json.dumps(PLAN), ANSWER])
 
     cfg = load_config("config/servers.yaml")

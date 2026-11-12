@@ -17,7 +17,7 @@ def _hermetic_env(monkeypatch):
     load_dotenv() never overrides variables that are already set, so pinning them
     here keeps every run identical regardless of the machine.
     """
-    monkeypatch.setenv("ORCHESTRATOR_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "claude-sonnet-5-5")
 
 
 class FakePool:
@@ -120,7 +120,7 @@ class ScriptedAnthropic:
         )
 
 
-def scripted_llm(replies: list[str], model: str = "claude-sonnet-5"):
+def scripted_llm(replies: list[str], model: str = "claude-sonnet-5-5"):
     from orchestrator.llm import LLM
 
     llm = LLM(model, api_key="test-key-not-used")

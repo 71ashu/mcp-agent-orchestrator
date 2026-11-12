@@ -1,7 +1,7 @@
 """The tracing API used by instrumented code.
 
     tracer = Tracer.from_env()          # None unless SWITCHBOARD_TRACE_URL is set
-    with tracer.run("deploy check", model="claude-sonnet-5") as run:
+    with tracer.run("deploy check", model="claude-sonnet-5-5") as run:
         with tracer.span("tool_call", "deployment.get_logs", mcp_server="deployment",
                          tool="get_logs", input=args) as span:
             span.set_output(result)

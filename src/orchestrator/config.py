@@ -36,7 +36,7 @@ class ServerConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    model: str = "claude-sonnet-5"
+    model: str = "claude-sonnet-5-5"
     max_plan_steps: int = 12
     max_step_attempts: int = 3
     max_replans: int = 2
@@ -53,6 +53,6 @@ def load_config(path: str | Path = "config/servers.yaml") -> AppConfig:
     raw = _expand(raw)
     servers = [ServerConfig(**s) for s in raw.get("servers", [])]
     return AppConfig(
-        model=os.environ.get("ORCHESTRATOR_MODEL", "claude-sonnet-5"),
+        model=os.environ.get("ORCHESTRATOR_MODEL", "claude-sonnet-5-5"),
         servers=servers,
     )

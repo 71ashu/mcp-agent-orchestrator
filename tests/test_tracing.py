@@ -88,7 +88,7 @@ async def test_full_run_emits_a_well_formed_span_tree(tmp_path):
 
     run, spans = materialize(events)
     assert run["task"] == "Roll back payments if it is erroring"
-    assert run["model"] == "claude-sonnet-5"
+    assert run["model"] == "claude-sonnet-5-5"
     assert run["status"] == "succeeded"
     assert run["output"] == {"answer": "Rolled back d-payments-482."}
     assert run["attributes"]["servers"] == ["deployment"]
@@ -113,7 +113,7 @@ async def test_full_run_emits_a_well_formed_span_tree(tmp_path):
     assert "parent_span_id" not in llm_calls["llm:synthesize"]  # run-level
     for call in llm_calls.values():
         assert (call["tokens_in"], call["tokens_out"]) == (100, 20)
-        assert call["model"] == "claude-sonnet-5"
+        assert call["model"] == "claude-sonnet-5-5"
         assert call["output"]["stop_reason"] == "end_turn"
 
     steps = {s["attributes"]["plan_step_id"]: s for s in of_type(spans, "step")}

@@ -21,12 +21,12 @@ def kinds(events):
 
 
 def test_run_and_nested_spans_emit_start_end_events_with_parents(tracer, mem):
-    with tracer.run("check payments", model="claude-sonnet-5", attributes={"v": 1}) as run:
+    with tracer.run("check payments", model="claude-sonnet-5-5", attributes={"v": 1}) as run:
         with tracer.span("step", "step 1", mcp_server="deployment", tool="get_logs") as step:
             with tracer.span("tool_call", "deployment.get_logs", input={"id": "d-1"}, attempt=1) as tc:
                 tc.set_output([{"msg": "boom"}])
             step.set_status("succeeded")
-        with tracer.span("llm_call", "llm:synthesize", model="claude-sonnet-5") as llm:
+        with tracer.span("llm_call", "llm:synthesize", model="claude-sonnet-5-5") as llm:
             llm.set_tokens(120, 40)
         run.set_output({"answer": "ok"})
 
@@ -43,7 +43,7 @@ def test_run_and_nested_spans_emit_start_end_events_with_parents(tracer, mem):
     ev = mem.events
     assert all(e["run_id"] == run.id and e["schema_version"] == 1 for e in ev)
     assert len({e["event_id"] for e in ev}) == len(ev)
-    assert ev[0]["span_id"] is None and ev[0]["payload"]["model"] == "claude-sonnet-5"
+    assert ev[0]["span_id"] is None and ev[0]["payload"]["model"] == "claude-sonnet-5-5"
     assert "parent_span_id" not in ev[1]["payload"]  # step is a root span
     assert ev[2]["payload"]["parent_span_id"] == step.id
     assert ev[2]["payload"]["input"] == {"id": "d-1"} and ev[2]["payload"]["attempt"] == 1
