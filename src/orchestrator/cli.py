@@ -233,6 +233,46 @@ def eval_cmd(
 
 
 @app.command()
+def web(
+    config: str = typer.Option("config/servers.yaml"),
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(8000),
+    build: bool = typer.Option(False, "--build", help="rebuild the web UI before serving"),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="open a browser tab"),
+):
+    """Serve the browser demo UI: live runs, approvals, and replays."""
+    import shutil
+    import subprocess
+    import threading
+    import webbrowser
+
+    try:
+        import uvicorn
+
+        from .web import DIST_DIR, create_app
+    except ImportError:
+        console.print("[red]The web UI needs fastapi and uvicorn:[/] pip install -e .")
+        raise typer.Exit(1) from None
+
+    web_dir = DIST_DIR.parent
+    if build or not (DIST_DIR / "index.html").exists():
+        npm = shutil.which("npm")
+        if not npm:
+            console.print("[red]web/dist is missing and npm isn't installed to build it.[/]")
+            raise typer.Exit(1)
+        console.print("[dim]Building the web UI (one time)...[/]")
+        if not (web_dir / "node_modules").exists():
+            subprocess.run([npm, "install", "--no-audit", "--no-fund"], cwd=web_dir, check=True)
+        subprocess.run([npm, "run", "build"], cwd=web_dir, check=True)
+
+    url = f"http://{host}:{port}"
+    console.print(f"[green]Demo UI:[/] {url}")
+    if open_browser:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    uvicorn.run(create_app(config), host=host, port=port, log_level="warning")
+
+
+@app.command()
 def memory(path: str = typer.Option("data/memory.json")):
     """Show recorded task memory."""
     p = Path(path)

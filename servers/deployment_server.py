@@ -137,6 +137,8 @@ def get_service_health(service: str) -> dict[str, Any]:
 @mcp.tool()
 def get_logs(deployment_id: str, level: str | None = None) -> list[dict[str, Any]]:
     """Return log lines for a deployment, optionally filtered by level (info|warn|error)."""
+    if deployment_id not in DEPLOYMENTS:
+        raise ValueError(f"unknown deployment '{deployment_id}'")
     lines = LOGS.get(deployment_id, [])
     if level:
         lines = [ln for ln in lines if ln["level"] == level]

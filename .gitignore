@@ -17,3 +17,7 @@ sandbox/*
 !sandbox/checkout-notes.txt
 !sandbox/ledger.txt
 .DS_Store
+# web demo UI build output (rebuilt by `orchestrator web`)
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
