@@ -12,6 +12,9 @@ dependencies = [
     "rich>=13.7",
     "python-dotenv>=1.0",
     "typer>=0.12",
+    # web demo UI (`orchestrator web`)
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]

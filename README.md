@@ -166,6 +166,23 @@ steps=5 tool_calls=5 failures=0 retries=0 replans=0 approvals=1/1
 
 The excerpt trims the planner-reasoning panel, the step-2 result line and the server startup logs.
 
+## Web demo
+
+```bash
+orchestrator web
+```
+
+Opens a browser UI at http://127.0.0.1:8000 (the first start builds `web/` with npm). It
+shows the plan as it forms, the evidence each step gathered, an approval card for every
+write tool (approve, or reject with a reason that the replanner acts on), and the final
+answer. The backend (`src/orchestrator/web.py`) runs each goal in its own thread and event
+loop and streams the Orchestrator's `on_plan` / `on_step` / approver hooks to the page as
+Server-Sent Events.
+
+Every run is saved to `data/runs/<timestamp>.jsonl`. **Replay a saved run** plays one back
+at its recorded pace with no API or tool calls; `data/recordings/` holds one run of each
+preset. Frontend dev: `orchestrator web --no-open` plus `cd web && npm run dev`.
+
 ## Evaluation harness
 
 ```bash
